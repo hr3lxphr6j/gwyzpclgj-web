@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>国考报名照片处理工具</title>
+    <meta
+      name="description"
+      content="在浏览器本地校验、裁切并导出 295×413 报名照片，照片不离开本机。"
+    />
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./style.css" />
+    <!-- Cloudflare Web Analytics. `async` keeps a slow/blocked beacon from
+         delaying the app.js module (which starts the worker). -->
+    <script
+      type="module"
+      async
+      src="https://static.cloudflareinsights.com/beacon.min.js"
+      data-cf-beacon='{"token": "becbcd11260241b093a0046707004203"}'
+    ></script>
+    <!-- End Cloudflare Web Analytics -->
+  </head>
+  <body>
+    <main class="app">
+      <header class="intro">
+        <h1>国考报名照片处理工具</h1>
+        <p class="lede">本地处理 · 不上传 · 与官方工具行为一致。仅供学习交流使用，本人不承担使用本工具带来的后果。</p>
+      </header>
+
+      <label
+        id="drop"
+        class="drop"
+        for="file-input"
+        role="button"
+        tabindex="0"
+        aria-describedby="drop-hint"
+      >
+        <span class="drop-title">拖拽 JPG 到这里，或点击选择照片</span>
+        <span id="drop-hint" class="drop-hint">蓝底/白底 · ≥295×413 · 正面免冠</span>
+        <input
+          id="file-input"
+          class="file-input"
+          type="file"
+          accept=".jpg,.jpeg,.jpe,.jfif,image/jpeg"
+          tabindex="-1"
+        />
+      </label>
+
+      <p id="status" class="status" role="status" aria-live="polite" data-state="loading">
+        正在加载处理引擎…
+      </p>
+      <p id="error" class="error" role="alert" hidden></p>
+
+      <section id="result" class="result" aria-label="处理结果" hidden>
+        <img id="preview" class="preview" alt="处理后的报名照片预览" />
+        <div class="result-body">
+          <p class="result-title">处理成功</p>
+          <p id="meta" class="meta"></p>
+          <a id="download" class="download" download="报名照片.jpg">保存照片</a>
+          <p class="result-note">照片未上传，保存后可直接用于报名。</p>
+        </div>
+      </section>
+
+      <p class="tip">手机照片如方向不对，请先在相册中导出为正向 JPG。</p>
+
+      <footer class="footer">C++ + OpenCV + WebAssembly · 照片不离开本机 · 访问统计：Cloudflare</footer>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+gwyzpclgj/
+.superpowers/
+.worktrees/
+.DS_Store
+build/
+.emsdk/
+vendor/
+web/pkg/
+node_modules/
+*.log
+docs/superpowers/

@@ -1,0 +1,101 @@
+{
+  "config": {
+    "ini": "photo.ini",
+    "i_min": 0.1,
+    "i_max": 0.7,
+    "s_min": 0.05,
+    "s_max": 0.1,
+    "blue_h": [
+      2.5,
+      4.5
+    ]
+  },
+  "cases": [
+    {
+      "name": "p1_white",
+      "input": "jpg/p1_white.jpg",
+      "expected": {
+        "code": 4
+      }
+    },
+    {
+      "name": "p2_blue",
+      "input": "jpg/p2_blue.jpg",
+      "expected": {
+        "code": 0
+      }
+    },
+    {
+      "name": "p3_warm",
+      "input": "jpg/p3_warm.jpg",
+      "expected": {
+        "code": 3
+      }
+    },
+    {
+      "name": "p4_dim",
+      "input": "jpg/p4_dim.jpg",
+      "expected": {
+        "code": 3
+      }
+    },
+    {
+      "name": "p5_red",
+      "input": "jpg/p5_red.jpg",
+      "expected": {
+        "code": 3
+      }
+    },
+    {
+      "name": "p6_fullbody",
+      "input": "jpg/p6_fullbody.jpg",
+      "expected": {
+        "code": 4
+      }
+    },
+    {
+      "name": "p7_noface",
+      "input": "jpg/p7_noface.jpg",
+      "expected": {
+        "code": 3
+      }
+    },
+    {
+      "name": "p8_two",
+      "input": "jpg/p8_two.jpg",
+      "expected": {
+        "code": 4
+      }
+    }
+  ],
+  "testFiles": [
+    {
+      "input": "small/200x300.jpg",
+      "expectedCode": 2,
+      "note": "200x300 downscale of p2_blue; below the 295x413 minimum"
+    },
+    {
+      "input": "bad/notjpeg.jpg",
+      "expectedCode": 1,
+      "note": "PNG renamed to .jpg; SOI check must reject it"
+    },
+    {
+      "input": "corrupt/truncated.jpg",
+      "expectedCode": 1,
+      "note": "first 1000 bytes of p2_blue; truncated stream without EOI"
+    },
+    {
+      "input": "flat/blue_400x600.jpg",
+      "expectedCode": 5,
+      "note": "flat blue background, no face; covers the empty detection branch"
+    },
+    {
+      "input": "large/p2_blue_12mp.jpg",
+      "expectedCode": 0,
+      "note": "3000x4500 (~13.5MP) upscale of p2_blue; memory/latency coverage"
+    }
+  ],
+  "notes": [
+    "tests/run_wasm.mjs also asserts that an in-memory 0-byte input returns code 1."
+  ]
+}

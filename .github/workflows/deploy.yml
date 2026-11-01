@@ -1,0 +1,74 @@
+name: Build and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  # Never cancel a deployment that is already publishing to production.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        # Install explicitly so the workflow does not depend on runner image changes.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+          cmake --version
+
+      - name: Cache Emscripten and OpenCV
+        uses: actions/cache@v4
+        with:
+          path: |
+            .emsdk
+            vendor/opencv-4.10.0
+            build/opencv
+            build/opencv-install
+          key: ${{ runner.os }}-opencv-4.10.0-emsdk-6.0.13-${{ hashFiles('Makefile') }}
+
+      - name: Build wasm module
+        # `make build` runs the bootstrap target, which re-activates emsdk
+        # (idempotent) when the cache restored a complete toolchain.
+        run: make build
+
+      - name: Tests
+        # logic_test + messages_test + run_wasm; `make test` depends on wasm.
+        run: make test
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        # Needs the pages permission granted to this job: configure-pages calls
+        # GET /repos/{owner}/{repo}/pages, which the build job (contents: read
+        # only) is not allowed to call. Nothing in the build job consumes its
+        # outputs, so it belongs with the deployment.
+        uses: actions/configure-pages@v5
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
