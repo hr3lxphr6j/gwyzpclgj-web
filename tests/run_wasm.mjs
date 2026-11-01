@@ -1,8 +1,9 @@
 // Full Node-side integration test for the wasm photo pipeline.
 //
 // Covers: fixture decision codes, the p2 success payload (size, SOF, trailer,
-// DQT, SSIM against the reference output), EXIF orientation handling, and the
-// boundary inputs (too small, non-JPEG, truncated, empty, no face, 12MP).
+// DQT, SSIM against the reference output), EXIF orientation handling, extended
+// formats (PNG/WebP/BMP/TIFF), alpha compositing, and the boundary inputs
+// (too small, unsupported, truncated, empty, no face, 12MP).
 //
 // Run from anywhere:
 //   node tests/run_wasm.mjs
@@ -363,14 +364,106 @@ check(
 );
 check(small.bgClass === -1, `small/200x300 reached background sampling`);
 
-const notJpeg = runOn(readFixture('bad/notjpeg.jpg'), 'bad/notjpeg');
-expectCode(notJpeg, 1);
-expectRejected(notJpeg);
+// A PNG renamed to .jpg must be detected by magic bytes, not by extension.
+// It is a valid 200x300 PNG, so it gets past format detection and is rejected
+// by the minimum-pixel check (code 2) rather than the old JPEG-only code 1.
+const pngRenamed = runOn(readFixture('bad/notjpeg.jpg'), 'bad/notjpeg (PNG renamed)');
+expectCode(pngRenamed, 2);
+expectRejected(pngRenamed);
 check(
-  notJpeg.inputW === 0 && notJpeg.inputH === 0,
-  `non-JPEG input has decoded metadata ${notJpeg.inputW}x${notJpeg.inputH}`,
+  pngRenamed.inputW === 200 && pngRenamed.inputH === 300,
+  `renamed PNG decoded as ${pngRenamed.inputW}x${pngRenamed.inputH}, ` +
+    'expected 200x300',
 );
-check(notJpeg.bgClass === -1, 'non-JPEG input reached background sampling');
+check(pngRenamed.bgClass === -1, 'renamed PNG reached background sampling');
+
+// ---------------------------------------------------------------------------
+// 5b. Extended formats (web-only extension; JPEG remains byte-for-byte on its
+// original path). Each format is decoded, run through the same background,
+// face and crop pipeline, and re-encoded as the same 295x413 JPEG.
+// ---------------------------------------------------------------------------
+const formatCases = [
+  ['formats/p2_blue.png', 'PNG'],
+  ['formats/p2_blue.webp', 'WebP'],
+  ['formats/p2_blue.bmp', 'BMP'],
+  ['formats/p2_blue.tiff', 'TIFF'],
+];
+const formatSummary = [];
+for (const [fixture, label] of formatCases) {
+  const result = runOn(readFixture(fixture), label);
+  expectCode(result, 0);
+  check(
+    result.inputW === 512 && result.inputH === 768,
+    `${label} input metadata is ${result.inputW}x${result.inputH}, ` +
+      'expected 512x768',
+  );
+  check(
+    result.outputW === 295 && result.outputH === 413,
+    `${label} output metadata is ${result.outputW}x${result.outputH}, ` +
+      'expected 295x413',
+  );
+  assertJpegEnvelope(result.output, label);
+  check(
+    result.output.length > 5 * 1024 && result.output.length < 15 * 1024,
+    `${label} output is ${result.output.length} bytes, expected 5KB-15KB`,
+  );
+  formatSummary.push(`${label}=${result.code}`);
+}
+
+// Transparent pixels are composited over white. Fully transparent black
+// would otherwise sample as black (code 3); white makes the no-face branch
+// (code 5) the observable result.
+const transparent = runOn(
+  readFixture('formats/transparent_400x600.png'),
+  'transparent PNG',
+);
+expectCode(transparent, 5);
+expectRejected(transparent);
+check(
+  transparent.inputW === 400 && transparent.inputH === 600,
+  `transparent PNG decoded as ${transparent.inputW}x${transparent.inputH}`,
+);
+check(
+  transparent.bgClass === 0,
+  `transparent PNG background class is ${transparent.bgClass}, expected white (0)`,
+);
+
+// Truncated non-JPEG containers must not reach the pipeline. These use the
+// same completeness checks as the JPEG EOI guard.
+const pngBytes = readFixture('formats/p2_blue.png');
+const truncatedPng = runOn(
+  pngBytes.subarray(0, pngBytes.length - 12),
+  'truncated PNG (missing IEND)',
+);
+expectCode(truncatedPng, 6);
+expectRejected(truncatedPng);
+
+const webpBytes = readFixture('formats/p2_blue.webp');
+const truncatedWebp = runOn(
+  webpBytes.subarray(0, webpBytes.length - 100),
+  'truncated WebP',
+);
+expectCode(truncatedWebp, 6);
+expectRejected(truncatedWebp);
+
+const bmpBytes = readFixture('formats/p2_blue.bmp');
+const truncatedBmp = runOn(
+  bmpBytes.subarray(0, bmpBytes.length - 100),
+  'truncated BMP',
+);
+expectCode(truncatedBmp, 6);
+expectRejected(truncatedBmp);
+
+const unsupported = runOn(
+  Buffer.from('this is not an image\n', 'utf8'),
+  'unsupported text',
+);
+expectCode(unsupported, 6);
+expectRejected(unsupported);
+check(
+  unsupported.inputW === 0 && unsupported.inputH === 0,
+  `unsupported input has decoded metadata ${unsupported.inputW}x${unsupported.inputH}`,
+);
 
 const truncated = runOn(
   readFixture('corrupt/truncated.jpg'),
@@ -446,8 +539,11 @@ console.log(
   `exif: input=${exif.inputW}x${exif.inputH} stored orientation kept, ` +
     'output identical to the untagged run',
 );
+console.log(`formats: ${formatSummary.join(', ')}, alpha=${transparent.code} (bg=${transparent.bgClass})`);
 console.log(
-  `boundaries: small=${small.code}, notjpeg=${notJpeg.code}, ` +
+  `boundaries: small=${small.code}, png_renamed=${pngRenamed.code}, ` +
+    `unsupported=${unsupported.code}, truncated_png=${truncatedPng.code}, ` +
+    `truncated_webp=${truncatedWebp.code}, truncated_bmp=${truncatedBmp.code}, ` +
     `truncated=${truncated.code}, empty=${empty.code}, ` +
     `flat=${flat.code} (bg=${flat.bgClass}), large=${large.code} ` +
     `(${large.outputW}x${large.outputH})`,

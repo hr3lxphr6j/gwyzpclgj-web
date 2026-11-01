@@ -6,7 +6,7 @@
     <title>国考报名照片处理工具</title>
     <meta
       name="description"
-      content="在浏览器本地校验、裁切并导出 295×413 报名照片，照片不离开本机。"
+      content="在浏览器本地校验、裁切并导出 295×413 报名照片，支持 JPG/PNG/WebP/BMP/TIFF，照片不离开本机。"
     />
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./style.css" />
@@ -24,7 +24,7 @@
     <main class="app">
       <header class="intro">
         <h1>国考报名照片处理工具</h1>
-        <p class="lede">本地处理 · 不上传 · 与官方工具行为一致。仅供学习交流使用，本人不承担使用本工具带来的后果。</p>
+        <p class="lede">本地处理 · 不上传 · JPG 处理与官方工具一致。仅供学习交流使用，本人不承担使用本工具带来的后果。</p>
       </header>
 
       <label
@@ -35,13 +35,13 @@
         tabindex="0"
         aria-describedby="drop-hint"
       >
-        <span class="drop-title">拖拽 JPG 到这里，或点击选择照片</span>
-        <span id="drop-hint" class="drop-hint">蓝底/白底 · ≥295×413 · 正面免冠</span>
+        <span class="drop-title">拖拽照片到这里，或点击选择照片</span>
+        <span id="drop-hint" class="drop-hint">JPG/PNG/WebP/BMP/TIFF · 蓝底/白底 · ≥295×413 · 正面免冠</span>
         <input
           id="file-input"
           class="file-input"
           type="file"
-          accept=".jpg,.jpeg,.jpe,.jfif,image/jpeg"
+          accept=".jpg,.jpeg,.jpe,.jfif,.png,.webp,.bmp,.tif,.tiff,image/jpeg,image/png,image/webp,image/bmp,image/x-ms-bmp,image/tiff,image/x-tiff"
           tabindex="-1"
         />
       </label>
@@ -61,7 +61,7 @@
         </div>
       </section>
 
-      <p class="tip">手机照片如方向不对，请先在相册中导出为正向 JPG。</p>
+      <p class="tip">手机照片如方向不对，请先在相册中导出为正向图片。</p>
 
       <footer class="footer">
         C++ + OpenCV + WebAssembly · 照片不离开本机 · 访问统计：Cloudflare

@@ -5,32 +5,48 @@
 
 ![界面](docs/screenshot.png)
 
-静态网页版「报名照片处理工具」：在浏览器本地完成背景校验、人脸检测、自动裁切、
-295×413 缩放、JPEG 编码与尾标记追加，并直接下载 `报名照片.jpg`。所有照片处理都在
-本机完成，不上传图片、没有后端。
+静态网页版「报名照片处理工具」：支持 JPG/JPEG、PNG、WebP、BMP、TIFF 输入，在
+浏览器本地完成背景校验、人脸检测、自动裁切、295×413 缩放、JPEG 编码与尾标记追加，
+并直接下载 `报名照片.jpg`。所有照片处理都在本机完成，不上传图片、没有后端。
 
-本仓库是对桌面版 `照片处理工具.exe` 的行为复刻：错误码、提示文案、配置参数、裁切
-公式、编码流程与 10 字节尾标记都按原工具实现。网页 UI 为原程序没有的交付形态，但
-处理结果保持一致。
+本仓库的 JPEG 路径是对桌面版 `照片处理工具.exe` 的行为复刻：错误码 1–5、提示文案、
+配置参数、裁切公式、编码流程与 10 字节尾标记都按原工具实现。PNG/WebP/BMP/TIFF 是
+网页版扩展，走同一套背景/人脸/裁切/编码流程，输出仍是带尾标记的 JPEG。
 
-## 严格复刻的行为
+## JPEG 严格复刻的行为
 
 ### 输入与错误码
 
-只接受 JPEG（前两字节为 `FF D8`），且要求文件含完整的 EOI 标记。错误码与提示文案
-逐字一致（全角标点也是契约的一部分）：
+JPEG 路径只接受前两字节为 `FF D8` 且含完整 EOI 标记的文件；格式检测按文件内容
+（magic bytes），不依赖扩展名或浏览器 MIME。错误码 1–5 与提示文案逐字一致（全角
+标点也是契约的一部分）；错误码 6 是网页版对非 JPEG 格式的扩展：
 
 | 码 | 触发条件 | 提示语 |
 |---|---|---|
-| 1 | 不是 `FF D8` 开头，或 JPEG 解码失败，或文件被截断（缺少 EOI） | 打开照片文件类型不是JPG/JPEG格式，请选择JPG/JPEG格式照片文件。 |
+| 1 | JPEG 不是 `FF D8` 开头，或解码失败，或文件被截断（缺少 EOI） | 打开照片文件类型不是JPG/JPEG格式，请选择JPG/JPEG格式照片文件。 |
 | 2 | 解码后宽 < 295 或高 < 413 | 打开照片文件像素数低。请选择高于或符合像素数要求的照片文件。 |
 | 3 | 背景判定不通过 | 打开照片文件背景不符合要求。请选择白色或蓝色背景照片文件。 |
 | 4 | 人脸宽度 / 图宽 < 0.32，或裁切框居中校验失败 | 打开照片文件人像头部比例不符合要求。请选择头部比例适当的照片文件。 |
 | 5 | Haar 级联未检出人脸 | 打开照片文件不符合要求。请选择正面人像标准证件照片文件。 |
+| 6 | 非 JPEG 格式不受支持或解码失败（网页版扩展） | 打开照片文件格式不受支持。请选择JPG/JPEG、PNG、WebP、BMP或TIFF格式照片文件。 |
 | 0 | 成功 | 无 |
 
 错误 1 中的 EOI 完整性检查是**相对原 exe 的安全偏差**：原 exe 可能部分解码截断
-文件，本工具直接拒绝，避免把半张图当成正常照片处理。
+文件，本工具直接拒绝，避免把半张图当成正常照片处理。非 JPEG 格式也做轻量完整性
+检查：PNG 要求以 IEND 结束，WebP 要求 RIFF 长度不超过文件，BMP 要求头部文件长度
+不超过文件；截断的非 JPEG 返回错误 6。空文件和单字节文件仍返回错误 1。
+
+### 扩展输入格式（网页版）
+
+| 格式 | 识别方式 | 解码/像素说明 |
+|---|---|---|
+| PNG | `89 50 4E 47 0D 0A 1A 0A` | 支持 8/16-bit；透明像素铺白底 |
+| WebP | `RIFF....WEBP` | 支持有损/无损；透明像素铺白底 |
+| BMP | `BM` | 支持 8/24/32-bit；透明像素铺白底 |
+| TIFF | `II*\0` / `MM\0*` | 支持 8/16-bit；默认读取首张图 |
+
+所有格式都不应用 EXIF 方向（与 JPEG 路径一致）。不支持 GIF、HEIC/HEIF、AVIF；
+这些格式会返回错误 6。输出统一为 295×413、q95→q40 的 JPEG，并追加 10 字节尾标记。
 
 ### 背景判定
 
@@ -53,7 +69,9 @@
 
 ### 人脸与裁切
 
-1. 用 `IMREAD_COLOR | IMREAD_IGNORE_ORIENTATION` 解码为 BGR（**不应用 EXIF 方向**）。
+1. JPEG 用 `IMREAD_COLOR | IMREAD_IGNORE_ORIENTATION` 解码为 BGR（**不应用 EXIF 方向**）；
+   PNG/WebP/BMP/TIFF 用 `IMREAD_UNCHANGED`（其位包含 `IMREAD_IGNORE_ORIENTATION`），
+   透明通道铺白底，灰度/16-bit 输入转成 8-bit BGR。
 2. 转灰度后加载仓库自带的 `haarcascade_frontalface_alt2.xml`，调用
    `detectMultiScale(gray, faces, 1.1, 2, CASCADE_DO_CANNY_PRUNING, Size(30,30))`。
 3. 取**宽度最大**的人脸；宽度相等时保留先检出的一张。
@@ -91,7 +109,7 @@ ry = (fy - y0) / crop_h
 ## 技术栈
 
 - C++17 + OpenCV 4.10.0（`core`、`imgproc`、`calib3d`、`features2d`、`flann`、
-  `objdetect`、`imgcodecs`，含内置 libjpeg-turbo），由 Emscripten 6.0.13（
+  `objdetect`、`imgcodecs`，含内置 libjpeg-turbo、libpng、libwebp、libtiff），由 Emscripten 6.0.13（
   `wasm32-unknown-emscripten`）编译为 wasm 静态库。
 - 原生 HTML / CSS / ES modules，无前端框架；除 Cloudflare Web Analytics 脚本外
   无 CDN 资源。
@@ -176,7 +194,7 @@ make build
 OpenCV 检查/安装，无变化时主要耗时在重新链接。`make build` 每次都会做一次增量
 OpenCV 配置/构建/安装（无变化时通常几秒）；存在 `.opencv-config` stamp 且
 `OPENCV_SRC`、`EMSDK_DIR`、CMake flags 或版本变化时，会清空 `build/opencv*` 从头重建。
-产物为 `web/pkg/photo.js` 与约 1.4 MB 的 `web/pkg/photo.wasm`。
+产物为 `web/pkg/photo.js` 与约 2.2 MB 的 `web/pkg/photo.wasm`。
 
 路径与端口可用变量覆盖（命令行或环境变量；相对路径按当前工作目录解析，因此
 `make -C <repo>` 也可用）：
@@ -187,11 +205,14 @@ make build \
   OPENCV_SRC=/opt/opencv-4.10.0 \
   OPENCV_BUILD=/tmp/opencv-build \
   OPENCV_INSTALL=/tmp/opencv-install \
-  JPEG_LIB=/tmp/opencv-build/3rdparty/lib/liblibjpeg-turbo.a
+  JPEG_LIB=/tmp/opencv-build/3rdparty/lib/liblibjpeg-turbo.a \
+  PNG_LIB=/tmp/opencv-build/3rdparty/lib/liblibpng.a \
+  WEBP_LIB=/tmp/opencv-build/3rdparty/lib/liblibwebp.a \
+  TIFF_LIB=/tmp/opencv-build/3rdparty/lib/liblibtiff.a
 ```
 
 可覆盖的变量：`EMSDK_DIR`、`OPENCV_SRC`、`OPENCV_BUILD`、`OPENCV_INSTALL`、
-`JPEG_LIB`、`PORT`、`SERVE_ROOT`。不设置时全部落在仓库内（`PORT` 默认 8000，
+`JPEG_LIB`、`PNG_LIB`、`WEBP_LIB`、`TIFF_LIB`、`PORT`、`SERVE_ROOT`。不设置时全部落在仓库内（`PORT` 默认 8000，
 `SERVE_ROOT` 默认 `.`，即以仓库根目录为站点根）。构建路径不要包含空格：库文件列表
 按空白分词传给编译器，含空格的目录名会导致链接失败。
 
@@ -240,9 +261,9 @@ make test
 只跑纯 C++ 单测（不需要 OpenCV/wasm 工具链）时用 `make logic-test`。
 
 `logic_test` 覆盖背景色卡、色相/彩度边界、裁切公式、round-half-even、边界钳制、
-居中校验、最宽脸选择与尾标记字节。`run_wasm` 覆盖 8 张 fixture 的错误码、p2 的
-295×413 输出与尾标记、DQT 与参考图比对、SSIM、EXIF 方向不生效、非 JPEG/过小/损坏/
-空文件/无人脸/12MP 边界。
+居中校验、最宽脸选择与尾标记字节。`run_wasm` 覆盖 8 张 JPEG fixture 的错误码、p2 的
+295×413 输出与尾标记、DQT 与参考图比对、SSIM、EXIF 方向不生效、PNG/WebP/BMP/TIFF
+成功路径、透明 PNG 铺白、错误 6、截断容器、过小/损坏/空文件/无人脸/12MP 边界。
 
 ## 部署
 
@@ -285,9 +306,10 @@ curl -sI https://<user>.github.io/<repo>/pkg/photo.wasm | grep -i content-type
 
 - **不换底、不抠图、不磨皮/美白/调色**，只校验已有背景并自动裁切。
 - **不应用 EXIF 方向**（有意与原 exe 一致）。手机竖拍且带旋转标记的照片可能被当作
-  横图处理并报错；请先在相册中导出为正向 JPG。
-- **仅支持 JPEG 输入**，不接受 PNG/WebP；截断（缺少 EOI）的文件按错误 1 处理——
-  这是相对原 exe 的安全偏差，原 exe 可能部分解码截断文件。
+  横图处理并报错；请先在相册中导出为正向图片。
+- **JPEG 路径严格复刻；网页版额外支持 PNG/WebP/BMP/TIFF**。GIF、HEIC/HEIF、AVIF
+  暂不支持，返回错误 6；截断 JPEG 按错误 1 处理（相对原 exe 的安全偏差），截断的
+  PNG/WebP/BMP 按错误 6 处理。透明图片统一铺白底。
 - 多人合影时只取**最宽**的人脸，不提供选择 UI。
 - 裁切框完全由公式决定，不提供手动平移/缩放。
 - 追加的 10 字节尾标记不是标准 JPEG 段，部分查看器可能忽略或提示异常；报名上传端
@@ -301,5 +323,6 @@ curl -sI https://<user>.github.io/<repo>/pkg/photo.wasm | grep -i content-type
 
 - `web/assets/haarcascade_frontalface_alt2.xml`：OpenCV 官方
   `haarcascade_frontalface_alt2.xml` 级联，与桌面版使用同一模型。
-- `tests/fixtures/`：8 张回归照片与边界输入，期望错误码来自实机运行结果。
+- `tests/fixtures/`：8 张 JPEG 回归照片、边界输入，以及 PNG/WebP/BMP/TIFF 扩展格式
+  夹具；期望错误码来自实机运行结果。
 - `tests/reference/p2_blue_reference.jpg`：p2 的参考输出，用于校验 q40 量化表与 SSIM。

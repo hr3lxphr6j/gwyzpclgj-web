@@ -76,8 +76,8 @@
     },
     {
       "input": "bad/notjpeg.jpg",
-      "expectedCode": 1,
-      "note": "PNG renamed to .jpg; SOI check must reject it"
+      "expectedCode": 2,
+      "note": "200x300 PNG renamed to .jpg; magic sniffing accepts it, then the minimum-size check rejects it"
     },
     {
       "input": "corrupt/truncated.jpg",

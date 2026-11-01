@@ -90,7 +90,7 @@ function markReady() {
   resolveReady();
   if (phase === 'loading') {
     phase = 'idle';
-    setStatus('选择一张 JPG 照片开始处理', 'idle');
+    setStatus('选择一张照片开始处理', 'idle');
     setInteractive(true);
   }
 }
@@ -320,7 +320,7 @@ async function showSuccess(data) {
 
 function showFailure(data) {
   const message =
-    (data.code >= 1 && data.code <= 5 && MESSAGES[data.code]) ||
+    MESSAGES[data.code] ??
     `处理失败：${data.error || `内部错误（${data.code}）`}`;
   showError(message);
   phase = 'error';

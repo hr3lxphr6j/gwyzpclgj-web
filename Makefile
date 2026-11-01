@@ -1,7 +1,7 @@
 # Build entry points for the photo tool. Replaces the former scripts/*.sh.
 #
 #   make bootstrap   install/activate emsdk 6.0.13, fetch OpenCV 4.10.0 source
-#   make opencv      build the OpenCV wasm static libs (+ bundled libjpeg-turbo)
+#   make opencv      build the OpenCV wasm static libs (+ bundled libjpeg-turbo/libpng/libwebp/libtiff)
 #   make wasm        compile cpp/ and link web/pkg/photo.js + photo.wasm
 #   make build       bootstrap -> opencv -> wasm
 #   make test        C++ logic tests, message wording tests, wasm integration
@@ -21,6 +21,9 @@ OPENCV_SRC ?= vendor/opencv-4.10.0
 OPENCV_BUILD ?= build/opencv
 OPENCV_INSTALL ?= build/opencv-install
 JPEG_LIB ?= $(OPENCV_BUILD)/3rdparty/lib/liblibjpeg-turbo.a
+PNG_LIB ?= $(OPENCV_BUILD)/3rdparty/lib/liblibpng.a
+WEBP_LIB ?= $(OPENCV_BUILD)/3rdparty/lib/liblibwebp.a
+TIFF_LIB ?= $(OPENCV_BUILD)/3rdparty/lib/liblibtiff.a
 PORT ?= 8000
 SERVE_ROOT ?= .
 WEB_PKG ?= web/pkg
@@ -33,6 +36,9 @@ override OPENCV_SRC := $(abspath $(OPENCV_SRC))
 override OPENCV_BUILD := $(abspath $(OPENCV_BUILD))
 override OPENCV_INSTALL := $(abspath $(OPENCV_INSTALL))
 override JPEG_LIB := $(abspath $(JPEG_LIB))
+override PNG_LIB := $(abspath $(PNG_LIB))
+override WEBP_LIB := $(abspath $(WEBP_LIB))
+override TIFF_LIB := $(abspath $(TIFF_LIB))
 override SERVE_ROOT := $(abspath $(SERVE_ROOT))
 override WEB_PKG := $(abspath $(WEB_PKG))
 
@@ -79,9 +85,12 @@ OPENCV_CMAKE_FLAGS := \
 	-DWITH_GSTREAMER=OFF \
 	-DWITH_JPEG=ON \
 	-DBUILD_JPEG=ON \
-	-DWITH_PNG=OFF \
-	-DWITH_TIFF=OFF \
-	-DWITH_WEBP=OFF \
+	-DWITH_PNG=ON \
+	-DBUILD_PNG=ON \
+	-DWITH_TIFF=ON \
+	-DBUILD_TIFF=ON \
+	-DWITH_WEBP=ON \
+	-DBUILD_WEBP=ON \
 	-DWITH_OPENJPEG=OFF \
 	-DWITH_JASPER=OFF \
 	-DWITH_OPENEXR=OFF \
@@ -277,7 +286,7 @@ opencv: bootstrap
 	echo "==> Installing OpenCV"; \
 	cmake --install "$(OPENCV_BUILD)"; \
 	missing=""; \
-	for lib in $(OPENCV_LIBS) "$(JPEG_LIB)"; do \
+	for lib in $(OPENCV_LIBS) "$(JPEG_LIB)" "$(PNG_LIB)" "$(WEBP_LIB)" "$(TIFF_LIB)"; do \
 		[ -f "$$lib" ] || missing="$$missing $$lib"; \
 	done; \
 	if [ -n "$$missing" ]; then \
@@ -297,11 +306,13 @@ wasm: opencv
 			exit 1; \
 		fi; \
 	done; \
-	if [ ! -f "$(JPEG_LIB)" ]; then \
-		echo "JPEG static library not found: $(JPEG_LIB)" >&2; \
-		echo "Run 'make opencv' and check JPEG_LIB." >&2; \
-		exit 1; \
-	fi; \
+	for lib in "$(JPEG_LIB)" "$(PNG_LIB)" "$(WEBP_LIB)" "$(TIFF_LIB)"; do \
+		if [ ! -f "$$lib" ]; then \
+			echo "image codec static library not found: $$lib" >&2; \
+			echo "Run 'make opencv' and check the *_LIB variables." >&2; \
+			exit 1; \
+		fi; \
+	done; \
 	for lib in $(OPENCV_LIBS); do \
 		if [ ! -f "$$lib" ]; then \
 			echo "OpenCV wasm library missing: $$lib" >&2; \
@@ -317,6 +328,9 @@ wasm: opencv
 		-Wl,--start-group \
 			$(OPENCV_LIBS) \
 			"$(JPEG_LIB)" \
+			"$(PNG_LIB)" \
+			"$(WEBP_LIB)" \
+			"$(TIFF_LIB)" \
 		-Wl,--end-group \
 		-o "$(WEB_PKG)/photo.js" \
 		-sMODULARIZE=1 \

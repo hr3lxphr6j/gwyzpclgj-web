@@ -8,10 +8,11 @@
 //     module). Buffers are reused by the next call, so JavaScript must copy
 //     the output bytes immediately after photo_process returns.
 //   * photo_process returns 0 on success and the original tool's error codes
-//     otherwise: 1 = not a JPEG / decode failure, 2 = image smaller than
-//     295x413, 3 = background rejected, 4 = head ratio or centering check
-//     failed, 5 = no face detected. Unexpected internal failures return -1 and
-//     leave a message in the error buffer.
+//     otherwise: 1 = invalid/truncated JPEG, 2 = image smaller than 295x413,
+//     3 = background rejected, 4 = head ratio or centering check failed,
+//     5 = no face detected. Error 6 is a web-only extension for an unsupported
+//     or undecodable non-JPEG format. Unexpected internal failures return -1
+//     and leave a message in the error buffer.
 //   * Metadata is reset on every photo_process call. Fields that were not
 //     reached keep their neutral value: face/crop rectangles are all zero
 //     before a face is detected and before a crop is accepted, input/output
@@ -20,6 +21,7 @@
 
 #include <climits>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -87,10 +89,47 @@ void SetError(const char* stage, const char* detail) {
   }
 }
 
-// Strict signature check: the original tool only accepts JPEG input and
-// rejects anything that does not begin with an SOI marker.
+// Signature checks. The original tool only accepts JPEG; the web build also
+// accepts common still-image formats, but detection is always by file content,
+// never by extension or the browser-provided MIME type.
 bool LooksLikeJpeg(const uint8_t* data, size_t len) {
   return data != nullptr && len >= 2 && data[0] == 0xFF && data[1] == 0xD8;
+}
+
+bool LooksLikePng(const uint8_t* data, size_t len) {
+  static const uint8_t kSignature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A,
+                                        0x1A, 0x0A};
+  return data != nullptr && len >= sizeof(kSignature) &&
+         std::memcmp(data, kSignature, sizeof(kSignature)) == 0;
+}
+
+bool LooksLikeWebp(const uint8_t* data, size_t len) {
+  return data != nullptr && len >= 12 &&
+         std::memcmp(data, "RIFF", 4) == 0 &&
+         std::memcmp(data + 8, "WEBP", 4) == 0;
+}
+
+bool LooksLikeBmp(const uint8_t* data, size_t len) {
+  return data != nullptr && len >= 2 && data[0] == 'B' && data[1] == 'M';
+}
+
+bool LooksLikeTiff(const uint8_t* data, size_t len) {
+  return data != nullptr && len >= 4 &&
+         ((data[0] == 'I' && data[1] == 'I' && data[2] == 0x2A &&
+           data[3] == 0x00) ||
+          (data[0] == 'M' && data[1] == 'M' && data[2] == 0x00 &&
+           data[3] == 0x2A));
+}
+
+enum class ImageFormat { kJpeg, kPng, kWebp, kBmp, kTiff, kUnsupported };
+
+ImageFormat DetectFormat(const uint8_t* data, size_t len) {
+  if (LooksLikeJpeg(data, len)) return ImageFormat::kJpeg;
+  if (LooksLikePng(data, len)) return ImageFormat::kPng;
+  if (LooksLikeWebp(data, len)) return ImageFormat::kWebp;
+  if (LooksLikeBmp(data, len)) return ImageFormat::kBmp;
+  if (LooksLikeTiff(data, len)) return ImageFormat::kTiff;
+  return ImageFormat::kUnsupported;
 }
 
 // Walk the header segments up to the first SOS, then require an EOI marker in
@@ -125,6 +164,38 @@ bool HasEndOfImage(const uint8_t* data, size_t len) {
   return false;
 }
 
+// The extra formats do not get the original tool's JPEG-specific EOI check,
+// but a few cheap container checks preserve the same "never process a
+// half-written file" property. A valid PNG ends with the IEND chunk; a RIFF
+// size larger than the buffer means the WebP is truncated; BMP has its file
+// size in the header. TIFF offsets are left to libtiff, which fails the decode
+// on a truncated IFD.
+bool HasCompletePng(const uint8_t* data, size_t len) {
+  static const uint8_t kIend[12] = {0x00, 0x00, 0x00, 0x00, 'I', 'E',
+                                    'N',  'D',  0xAE, 0x42, 0x60, 0x82};
+  return data != nullptr && len >= sizeof(kIend) &&
+         std::memcmp(data + len - sizeof(kIend), kIend, sizeof(kIend)) == 0;
+}
+
+bool HasCompleteWebp(const uint8_t* data, size_t len) {
+  if (data == nullptr || len < 8) return false;
+  const uint32_t riff_size = static_cast<uint32_t>(data[4]) |
+                             (static_cast<uint32_t>(data[5]) << 8) |
+                             (static_cast<uint32_t>(data[6]) << 16) |
+                             (static_cast<uint32_t>(data[7]) << 24);
+  return static_cast<size_t>(riff_size) <= len - 8;
+}
+
+bool HasCompleteBmp(const uint8_t* data, size_t len) {
+  if (data == nullptr || len < 6) return false;
+  const uint32_t file_size = static_cast<uint32_t>(data[2]) |
+                             (static_cast<uint32_t>(data[3]) << 8) |
+                             (static_cast<uint32_t>(data[4]) << 16) |
+                             (static_cast<uint32_t>(data[5]) << 24);
+  // A zero size is legal in some hand-written BMPs; let the decoder decide.
+  return file_size == 0 || static_cast<size_t>(file_size) <= len;
+}
+
 // Decode with the same flags as the original executable. In particular
 // IMREAD_IGNORE_ORIENTATION keeps EXIF-rotated photos in their stored
 // orientation instead of silently rotating them.
@@ -138,6 +209,84 @@ bool DecodeJpeg(const uint8_t* jpg, size_t len, cv::Mat* out) {
   *out = cv::imdecode(buffer,
                       cv::IMREAD_COLOR | cv::IMREAD_IGNORE_ORIENTATION);
   return !out->empty();
+}
+
+// Convert a decoded still image to 8-bit BGR. JPEG always takes the exact
+// DecodeJpeg path above; the other formats are decoded unchanged so alpha can
+// be composited over white instead of being silently dropped.
+bool ToBgr(const cv::Mat& src, cv::Mat* out) {
+  if (src.empty() || out == nullptr) return false;
+
+  cv::Mat image;
+  if (src.depth() == CV_16U) {
+    // 16-bit PNG/TIFF is legal; map the full range to 8 bits.
+    src.convertTo(image, CV_8U, 1.0 / 257.0);
+  } else if (src.depth() == CV_8U) {
+    image = src;
+  } else {
+    return false;
+  }
+
+  const int channels = image.channels();
+  if (channels == 3) {
+    *out = image;
+    return true;
+  }
+  if (channels == 1) {
+    cv::cvtColor(image, *out, cv::COLOR_GRAY2BGR);
+    return true;
+  }
+  if (channels != 2 && channels != 4) return false;
+
+  // Composite transparency over white. The per-pixel loop keeps peak memory
+  // low for large photos; alpha is uncommon enough that vectorising this is
+  // not worth the extra float buffers.
+  cv::Mat bgr(image.rows, image.cols, CV_8UC3);
+  for (int y = 0; y < image.rows; ++y) {
+    const uint8_t* src_row = image.ptr<uint8_t>(y);
+    uint8_t* dst_row = bgr.ptr<uint8_t>(y);
+    for (int x = 0; x < image.cols; ++x) {
+      const unsigned alpha = channels == 4 ? src_row[3] : src_row[1];
+      const unsigned inverse = 255u - alpha;
+      if (channels == 4) {
+        dst_row[0] = static_cast<uint8_t>(
+            (src_row[0] * alpha + 255u * inverse + 127u) / 255u);
+        dst_row[1] = static_cast<uint8_t>(
+            (src_row[1] * alpha + 255u * inverse + 127u) / 255u);
+        dst_row[2] = static_cast<uint8_t>(
+            (src_row[2] * alpha + 255u * inverse + 127u) / 255u);
+        src_row += 4;
+      } else {
+        const uint8_t gray = static_cast<uint8_t>(
+            (src_row[0] * alpha + 255u * inverse + 127u) / 255u);
+        dst_row[0] = dst_row[1] = dst_row[2] = gray;
+        src_row += 2;
+      }
+      dst_row += 3;
+    }
+  }
+  *out = bgr;
+  return true;
+}
+
+bool DecodeImage(const uint8_t* data, size_t len, ImageFormat format,
+                 cv::Mat* out) {
+  if (data == nullptr || len == 0 || len > static_cast<size_t>(INT_MAX)) {
+    return false;
+  }
+  if (format == ImageFormat::kJpeg) return DecodeJpeg(data, len, out);
+
+  if (format == ImageFormat::kPng && !HasCompletePng(data, len)) return false;
+  if (format == ImageFormat::kWebp && !HasCompleteWebp(data, len)) return false;
+  if (format == ImageFormat::kBmp && !HasCompleteBmp(data, len)) return false;
+
+  cv::Mat buffer(1, static_cast<int>(len), CV_8UC1,
+                 const_cast<uint8_t*>(data));
+  // IMREAD_UNCHANGED is -1, whose bits include IMREAD_IGNORE_ORIENTATION;
+  // keeping the stored orientation matches the original tool's behaviour.
+  cv::Mat decoded = cv::imdecode(buffer, cv::IMREAD_UNCHANGED);
+  if (decoded.empty()) return false;
+  return ToBgr(decoded, out);
 }
 
 // Copy a detected face into the metadata mirrors.
@@ -218,16 +367,19 @@ int photo_init_cascade(const uint8_t* xml, size_t len) {
   }
 }
 
-int photo_process(const uint8_t* jpg, size_t len) {
+int photo_process(const uint8_t* data, size_t len) {
   ClearError();
   ResetMetadata();
   g_output.clear();
 
   try {
-    if (!LooksLikeJpeg(jpg, len)) return 1;
+    const ImageFormat format = DetectFormat(data, len);
+    if (format == ImageFormat::kUnsupported) return len < 2 ? 1 : 6;
 
     cv::Mat img;
-    if (!DecodeJpeg(jpg, len, &img)) return 1;
+    if (!DecodeImage(data, len, format, &img)) {
+      return format == ImageFormat::kJpeg ? 1 : 6;
+    }
 
     g_input_w = img.cols;
     g_input_h = img.rows;
@@ -361,16 +513,18 @@ int photo_output_h(void) { return g_output_h; }
 
 int photo_bg_class(void) { return g_bg_class; }
 
-int photo_test_decode(const uint8_t* jpg, size_t len) {
+int photo_test_decode(const uint8_t* data, size_t len) {
   ClearError();
   g_test_bgr.clear();
   g_test_bgr_w = 0;
   g_test_bgr_h = 0;
 
   try {
+    const ImageFormat format = DetectFormat(data, len);
     cv::Mat img;
-    if (!DecodeJpeg(jpg, len, &img)) {
-      SetError("test decode", "input is not a decodable JPEG");
+    if (format == ImageFormat::kUnsupported ||
+        !DecodeImage(data, len, format, &img)) {
+      SetError("test decode", "input is not a decodable image");
       return 0;
     }
     if (!img.isContinuous()) img = img.clone();
