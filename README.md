@@ -1,5 +1,8 @@
 # 国考报名照片 Web 工具
 
+**在线使用：** <https://hr3lxphr6j.github.io/gwyzpclgj-web/>  
+**源码仓库：** <https://github.com/hr3lxphr6j/gwyzpclgj-web>
+
 ![界面](docs/screenshot.png)
 
 静态网页版「报名照片处理工具」：在浏览器本地完成背景校验、人脸检测、自动裁切、
