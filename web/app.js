@@ -22,6 +22,12 @@ let phase = 'loading';
 let previewUrl = '';
 let pending = null;
 let worker = null;
+let lastOutputBase64 = '';
+let resultGeneration = 0;
+let albumSaveSupported = false;
+let albumSaveChecked = false;
+let albumSavePromise = null;
+let savingToAlbum = false;
 
 let initSettled = false;
 let engineReady = false;
@@ -59,6 +65,8 @@ function clearError() {
 }
 
 function clearResult() {
+  resultGeneration += 1;
+  lastOutputBase64 = '';
   resultEl.hidden = true;
   metaEl.textContent = '';
   downloadEl.removeAttribute('href');
@@ -79,6 +87,80 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   const kb = bytes / 1024;
   return `${kb >= 100 ? Math.round(kb) : kb.toFixed(1)} KB`;
+}
+
+function toBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+// The SDK script is optional and may load after app.js. Do not cache a
+// negative result merely because window.toy is not available yet; a click or
+// the window load event can retry the detection.
+function checkAlbumSaveSupport() {
+  if (albumSaveChecked) return Promise.resolve(albumSaveSupported);
+  if (albumSavePromise) return albumSavePromise;
+  if (
+    !window.toy ||
+    typeof window.toy.isSupport !== 'function' ||
+    typeof window.toy.saveImageToAlbum !== 'function'
+  ) {
+    return Promise.resolve(false);
+  }
+  albumSavePromise = window.toy
+    .isSupport('saveImageToAlbum')
+    .then((supported) => {
+      albumSaveSupported = Boolean(supported);
+      return albumSaveSupported;
+    })
+    .catch(() => {
+      albumSaveSupported = false;
+      return false;
+    })
+    .finally(() => {
+      albumSaveChecked = true;
+      albumSavePromise = null;
+    });
+  return albumSavePromise;
+}
+
+function fallbackDownload() {
+  if (!previewUrl) return;
+  const link = document.createElement('a');
+  link.href = previewUrl;
+  link.download = '报名照片.jpg';
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+async function saveToAlbum(base64) {
+  if (savingToAlbum || !base64 || !window.toy) return;
+  const generation = resultGeneration;
+  savingToAlbum = true;
+  setStatus('正在保存到相册…', 'processing');
+  try {
+    await window.toy.saveImageToAlbum({
+      base64Data: base64,
+      hintMsg: '需要相册权限来保存报名照片',
+    });
+    if (generation !== resultGeneration) return;
+    clearError();
+    setStatus('已保存到相册', 'success');
+  } catch (error) {
+    if (generation !== resultGeneration) return;
+    setStatus('已生成报名照片', 'success');
+    const detail = error instanceof Error ? error.message : String(error);
+    showError(`保存到相册失败：${detail}`);
+  } finally {
+    savingToAlbum = false;
+  }
 }
 
 function markReady() {
@@ -228,6 +310,10 @@ function restartEngine() {
 }
 
 startWorker();
+checkAlbumSaveSupport();
+window.addEventListener('load', () => {
+  checkAlbumSaveSupport();
+});
 
 ready.then(
   () => {},
@@ -302,6 +388,7 @@ function decodePreview() {
 async function showSuccess(data) {
   const blob = new Blob([data.buffer], { type: 'image/jpeg' });
   previewUrl = URL.createObjectURL(blob);
+  lastOutputBase64 = `data:image/jpeg;base64,${toBase64(data.buffer)}`;
 
   previewEl.src = previewUrl;
   metaEl.textContent = `${data.w} × ${data.h} · ${formatBytes(data.size)}`;
@@ -394,6 +481,38 @@ function pickFile(file) {
   handleFile(file).catch(() => {});
 }
 
+// B站 App: save through the Toy SDK. Web or any unsupported environment: let
+// the anchor's normal download run. The support check is cached at load; if
+// the SDK arrives late, the click path waits for one check and falls back to
+// a programmatic download when the capability is absent.
+downloadEl.addEventListener('click', (event) => {
+  const base64 = lastOutputBase64;
+  if (!base64) return;
+  if (!window.toy || typeof window.toy.saveImageToAlbum !== 'function') return;
+  if (albumSaveChecked && !albumSaveSupported) return;
+
+  event.preventDefault();
+  if (savingToAlbum) return;
+
+  if (albumSaveChecked) {
+    saveToAlbum(base64);
+    return;
+  }
+
+  checkAlbumSaveSupport()
+    .then((supported) => {
+      if (base64 !== lastOutputBase64) return;
+      if (!supported) {
+        fallbackDownload();
+        return;
+      }
+      saveToAlbum(base64);
+    })
+    .catch(() => {
+      if (base64 === lastOutputBase64) fallbackDownload();
+    });
+});
+
 fileInput.addEventListener('change', () => {
   const file = fileInput.files && fileInput.files[0];
   fileInput.value = '';
@@ -428,6 +547,14 @@ drop.addEventListener('keydown', (event) => {
 });
 
 if (isTestMode) {
-  // Automation-only hook. Never exposed on the production page.
-  window.__photoTest = { process: handleFile };
+  // Automation-only hooks. Never exposed on the production page.
+  window.__photoTest = {
+    process: handleFile,
+    checkAlbumSaveSupport,
+    resetAlbumSupport() {
+      albumSaveChecked = false;
+      albumSavePromise = null;
+      albumSaveSupported = false;
+    },
+  };
 }

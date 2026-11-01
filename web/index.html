@@ -10,6 +10,9 @@
     />
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./style.css" />
+    <!-- B站 Toy SDK. Optional: the page falls back to a normal browser download
+         outside the App. `defer` keeps a slow/blocked SDK from delaying app.js. -->
+    <script defer src="//s1.hdslb.com/bfs/seed/toy/app/sdk/toy-sdk.js"></script>
     <!-- Cloudflare Web Analytics. `async` keeps a slow/blocked beacon from
          delaying the app.js module (which starts the worker). -->
     <script
@@ -57,7 +60,7 @@
           <p class="result-title">处理成功</p>
           <p id="meta" class="meta"></p>
           <a id="download" class="download" download="报名照片.jpg">保存照片</a>
-          <p class="result-note">照片未上传，保存后可直接用于报名。</p>
+          <p class="result-note">照片未上传；B站 App 内保存到相册，网页端下载 JPG，保存后可直接用于报名。</p>
         </div>
       </section>
 

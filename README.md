@@ -1,6 +1,7 @@
 # 国考报名照片 Web 工具
 
-**在线使用：** <https://hr3lxphr6j.github.io/gwyzpclgj-web/>  
+**B站 Toy：** <https://www.bilibili.com/toy/9xm0nMGHQs0yKCIm/index.html><br>
+**在线使用（GitHub Pages）：** <https://hr3lxphr6j.github.io/gwyzpclgj-web/><br>
 **源码仓库：** <https://github.com/hr3lxphr6j/gwyzpclgj-web>
 
 ![界面](docs/screenshot.png)
@@ -105,6 +106,18 @@ ry = (fy - y0) / crop_h
 2. 以质量 **95** 编码 JPEG，再解码，再以质量 **40** 重新编码（与原工具的两代有损流程一致）。
 3. 在文件末尾追加 **10 字节**：`FF 02 00 08 67 6A 67 77 79 32`。
 4. 下载文件名固定为 `报名照片.jpg`。
+
+## B站 Toy 保存
+
+页面在 `<head>` 加载 `toy-sdk.js`。点击“保存照片”时：
+
+- `isSupport('saveImageToAlbum')` 为 true（B站 App）→ 调用
+  `saveImageToAlbum({ base64Data, hintMsg })` 保存到相册；
+- 否则（Web 或旧客户端）→ 继续使用标准 `<a download>` 下载 `报名照片.jpg`。
+
+当前只接入保存能力，不调用 `share` / `getQrCode` / 用户资料 / 云存储 / 排行榜。
+生成图约 7–8 KB，base64 远低于 5 MB 上限。GitHub Pages 与 B站 Toy 使用同一份静态
+`web/` 产物，运行时通过 `isSupport` 自动分支。
 
 ## 技术栈
 
@@ -277,8 +290,8 @@ make test
 4. 打包 `web/` 并通过 `actions/deploy-pages` 发布到 GitHub Pages。
 
 仓库设置中把 Pages 的 Source 选为 **GitHub Actions** 即可，无需 `gh-pages` 分支。
-页面内所有资源（除 Cloudflare Web Analytics 外）都使用相对路径，因此同时兼容用户
-主页与项目子路径（`https://<user>.github.io/<repo>/`）。`web/.nojekyll` 避免以
+页面内所有资源（除 Cloudflare Web Analytics 与 B站 Toy SDK 脚本外）都使用相对路径，
+因此同时兼容用户主页与项目子路径（`https://<user>.github.io/<repo>/`）。`web/.nojekyll` 避免以
 Jekyll 方式处理产物。首次运行因编译 OpenCV 较慢，命中缓存后通常在几分钟内完成。
 
 部署后建议确认 `.wasm` 的 MIME 类型：
@@ -295,12 +308,16 @@ curl -sI https://<user>.github.io/<repo>/pkg/photo.wasm | grep -i content-type
 
 - 照片读取、解码、人脸检测、裁切、编码与下载全部在浏览器本地完成，**不上传照片**，
   也没有账号、后端或云存储。
-- 页面加载会请求 Cloudflare Web Analytics 做无 Cookie 访问统计，涉及两个 host：
+- 页面加载会请求 B站 Toy SDK 脚本（`s1.hdslb.com`）。本工具只调用
+  `isSupport('saveImageToAlbum')` 与 `saveImageToAlbum`；B站 App 内保存时通过 SDK
+  把生成图交给 App 客户端，不读取用户资料/云存储/排行榜，也不向网页服务器上传照片。
+- 页面加载还会请求 Cloudflare Web Analytics 做无 Cookie 访问统计，涉及两个 host：
   `static.cloudflareinsights.com`（脚本）与 `cloudflareinsights.com`（`/cdn-cgi/rum`
   上报）。上报内容不含照片、文件名或图片数据。
-- 如果不需要统计，可在浏览器或网络中拦截上述两个 host；照片处理功能不受影响。
+- 如果不需要统计，可在浏览器或网络中拦截 Cloudflare 的两个 host；Toy SDK 被拦截时
+  页面仍可处理照片，Web 端回退为普通下载。
 - 照片处理流程本身不发起网络请求；页面加载/离开时 Cloudflare 仅发送不含照片、
-  文件名或图片数据的访问统计。
+  文件名或图片数据的访问统计，Toy SDK 仅负责 App 内相册保存桥接。
 
 ## 已知限制
 
@@ -317,6 +334,8 @@ curl -sI https://<user>.github.io/<repo>/pkg/photo.wasm | grep -i content-type
 - OpenCV 4.10 的人脸检测与原 exe 使用的 OpenCV 1.0 可能存在微小差异，裁切允许约 3%
   偏差；JPEG 编码器版本不同，输出字节不保证与桌面版逐字节相同（已校验尺寸、DQT 与
   SSIM）。
+- B站 App 内保存依赖 Toy SDK；Web 端始终回退为标准下载。当前未接入分享、二维码、
+  云存档或排行榜。
 - 不提供 PWA 离线缓存或单文件 HTML 版本；交付形态是静态目录。
 
 ## 素材来源
